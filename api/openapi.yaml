@@ -1,0 +1,163 @@
+﻿openapi: 3.1.0
+info:
+  title: AI-first Task Assistant API
+  version: 1.0.0
+servers:
+  - url: https://your-ai-gateway.example.com
+paths:
+  /v1/parse:
+    post:
+      summary: Parse natural language into structured task intent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ParseRequest'
+      responses:
+        '200':
+          description: Parsed intent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIResult'
+  /v1/review:
+    post:
+      summary: Review parser output for consistency and risk
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [parsed]
+              properties:
+                parsed:
+                  $ref: '#/components/schemas/AIResult'
+      responses:
+        '200':
+          description: Reviewed intent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIResult'
+  /v1/summarize:
+    post:
+      summary: Summarize metrics into human-readable report
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [period, metrics, timezone]
+              properties:
+                period:
+                  type: string
+                  enum: [daily, weekly, monthly]
+                metrics:
+                  type: object
+                timezone:
+                  type: string
+      responses:
+        '200':
+          description: Report summary
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [summary_markdown, confidence]
+                properties:
+                  summary_markdown:
+                    type: string
+                  confidence:
+                    type: number
+                    minimum: 0
+                    maximum: 1
+components:
+  schemas:
+    ParseRequest:
+      type: object
+      required: [input_text, timezone, now_iso]
+      properties:
+        input_text:
+          type: string
+        timezone:
+          type: string
+        now_iso:
+          type: string
+          format: date-time
+        profile_hints:
+          type: object
+    AIResult:
+      type: object
+      required: [intent, confidence, needs_confirmation]
+      properties:
+        intent:
+          type: string
+          enum: [create_task, update_task, delete_task, query_task, report]
+        task:
+          $ref: '#/components/schemas/TaskPayload'
+        reminder_plan:
+          $ref: '#/components/schemas/ReminderPlan'
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        needs_confirmation:
+          type: boolean
+        questions:
+          type: array
+          items:
+            type: string
+    TaskPayload:
+      type: object
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+          nullable: true
+        start_at:
+          type: string
+          format: date-time
+          nullable: true
+        due_at:
+          type: string
+          format: date-time
+          nullable: true
+        timezone:
+          type: string
+        priority:
+          type: string
+          enum: [low, medium, high, urgent]
+        status:
+          type: string
+          enum: [todo, in_progress, done, deferred]
+        tags:
+          type: array
+          items:
+            type: string
+        repeat_rule:
+          type: string
+          enum: [none, daily, weekly, rrule]
+    ReminderPlan:
+      type: object
+      properties:
+        daily_digest:
+          type: array
+          items:
+            type: string
+            pattern: '^\\d{2}:\\d{2}$'
+        before_start_minutes:
+          type: array
+          items:
+            type: integer
+        before_due_minutes:
+          type: array
+          items:
+            type: integer
+        overdue_repeat_minutes:
+          type: array
+          items:
+            type: integer
