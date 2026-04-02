@@ -20,7 +20,7 @@ export async function initDb() {
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = path.dirname(__filename);
   const schemaPath = path.resolve(__dirname, "../../db/schema.sql");
-  const schemaSql = await readFile(schemaPath, "utf8");
+  const schemaSql = (await readFile(schemaPath, "utf8")).replace(/^\uFEFF/, "");
 
   await pool.query(schemaSql);
   return { mode: "postgres" };
