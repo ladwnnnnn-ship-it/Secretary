@@ -25,6 +25,39 @@ function formatDue(dueAt) {
 export function createBot() {
   const bot = new Telegraf(appConfig.telegramBotToken);
 
+  async function beginThinking(ctx) {
+    let hintMessage = null;
+    let timer = null;
+
+    try {
+      hintMessage = await ctx.reply("思考中...");
+    } catch {
+      // Ignore UI hint failures.
+    }
+
+    try {
+      await ctx.sendChatAction("typing");
+      timer = setInterval(() => {
+        ctx.sendChatAction("typing").catch(() => {});
+      }, 4000);
+    } catch {
+      // Ignore typing status failures.
+    }
+
+    return async function endThinking() {
+      if (timer) {
+        clearInterval(timer);
+      }
+      if (hintMessage?.message_id) {
+        try {
+          await ctx.deleteMessage(hintMessage.message_id);
+        } catch {
+          // Ignore delete failures.
+        }
+      }
+    };
+  }
+
   bot.use(async (ctx, next) => {
     if (!isAuthorized(ctx)) {
       await ctx.reply("未授权用户。请在配置里设置 OWNER_TELEGRAM_USER_ID 或白名单。");
@@ -58,6 +91,7 @@ export function createBot() {
   async function handleNaturalText(ctx, inputText) {
     const timezone = appConfig.defaultTimezone;
     const nowIso = DateTime.now().setZone(timezone).toISO();
+    const endThinking = await beginThinking(ctx);
 
     try {
       const parsed = await parseTaskInput(inputText, timezone, nowIso);
@@ -83,6 +117,8 @@ export function createBot() {
       await ctx.reply(reply);
     } catch (error) {
       await ctx.reply(`AI 处理失败：${error.message}`);
+    } finally {
+      await endThinking();
     }
   }
 
@@ -96,6 +132,7 @@ export function createBot() {
   });
 
   bot.on("photo", async (ctx) => {
+    const endThinking = await beginThinking(ctx);
     try {
       const photos = ctx.message.photo || [];
       if (!photos.length) {
@@ -151,6 +188,8 @@ export function createBot() {
       await ctx.reply(lines.join("\n"));
     } catch (error) {
       await ctx.reply(`图片导入失败：${error.message}`);
+    } finally {
+      await endThinking();
     }
   });
 
