@@ -12,6 +12,23 @@ const pool = appConfig.pgUrl
 
 const memoryTasks = [];
 
+function normalizeTags(tags) {
+  if (Array.isArray(tags)) {
+    return tags
+      .map((item) => String(item).trim())
+      .filter(Boolean);
+  }
+
+  if (typeof tags === "string") {
+    return tags
+      .split(/[，,、|]/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  return [];
+}
+
 export async function initDb() {
   if (!pool) {
     return { mode: "memory" };
@@ -27,9 +44,11 @@ export async function initDb() {
 }
 
 export async function saveTask(task, telegramUserId) {
+  const normalizedTags = normalizeTags(task.tags);
+
   if (!pool) {
     const id = `mem-${Date.now()}`;
-    memoryTasks.push({ id, telegramUserId, ...task });
+    memoryTasks.push({ id, telegramUserId, ...task, tags: normalizedTags });
     return { id, source: "memory" };
   }
 
@@ -63,7 +82,7 @@ export async function saveTask(task, telegramUserId) {
         task.timezone,
         task.priority,
         task.status || "todo",
-        task.tags || [],
+        normalizedTags,
         task.repeat_rule || "none"
       ]
     );
