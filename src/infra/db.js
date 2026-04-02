@@ -1,4 +1,7 @@
-﻿import pg from "pg";
+﻿import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
+import pg from "pg";
 import { appConfig } from "../config.js";
 
 const { Pool } = pg;
@@ -8,6 +11,20 @@ const pool = appConfig.pgUrl
   : null;
 
 const memoryTasks = [];
+
+export async function initDb() {
+  if (!pool) {
+    return { mode: "memory" };
+  }
+
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = path.dirname(__filename);
+  const schemaPath = path.resolve(__dirname, "../../db/schema.sql");
+  const schemaSql = await readFile(schemaPath, "utf8");
+
+  await pool.query(schemaSql);
+  return { mode: "postgres" };
+}
 
 export async function saveTask(task, telegramUserId) {
   if (!pool) {

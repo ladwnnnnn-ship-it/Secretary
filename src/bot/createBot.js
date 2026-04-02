@@ -1,7 +1,7 @@
 ﻿import { DateTime } from "luxon";
 import { Telegraf } from "telegraf";
 import { appConfig } from "../config.js";
-import { parseTaskInput, reviewParsedResult } from "../ai/client.js";
+import { parseTaskInput, parseTasksFromImage, reviewParsedResult } from "../ai/client.js";
 import { listPendingTasks, saveTask } from "../infra/db.js";
 
 function isAuthorized(ctx) {
@@ -51,7 +51,7 @@ export function createBot() {
   });
 
   bot.start(async (ctx) => {
-    await ctx.reply("AI-first 任务 Bot 已启动。使用 /quick + 自然语言创建任务。\n例：/quick 明天10点前提交周报，优先级高");
+    await ctx.reply("AI-first 任务 Bot 已启动。使用 /quick + 自然语言创建任务，或直接发送日程图片自动导入。\n例：/quick 明天10点前提交周报，优先级高");
   });
 
   bot.command("quick", async (ctx) => {
@@ -82,6 +82,65 @@ export function createBot() {
       await ctx.reply(`${formatDraft(reviewed)}\n\n任务已自动创建。task_id=${saved.id} (store=${saved.source})`);
     } catch (error) {
       await ctx.reply(`AI 处理失败：${error.message}`);
+    }
+  });
+
+  bot.on("photo", async (ctx) => {
+    try {
+      const photos = ctx.message.photo || [];
+      if (!photos.length) {
+        await ctx.reply("未检测到图片内容。");
+        return;
+      }
+
+      const best = photos[photos.length - 1];
+      const fileLink = await ctx.telegram.getFileLink(best.file_id);
+      const caption = ctx.message.caption?.trim() || "";
+
+      const timezone = appConfig.defaultTimezone;
+      const nowIso = DateTime.now().setZone(timezone).toISO();
+
+      const parsed = await parseTasksFromImage(fileLink.toString(), timezone, nowIso, caption);
+      if (!parsed.tasks.length) {
+        const ask = parsed.questions?.length ? `\n备注: ${parsed.questions.join(" | ")}` : "";
+        await ctx.reply(`没有识别到可导入的日程任务。${ask}`);
+        return;
+      }
+
+      const created = [];
+      for (const task of parsed.tasks) {
+        if (!task.title) {
+          continue;
+        }
+        const saved = await saveTask(task, ctx.from.id);
+        created.push({ id: saved.id, title: task.title, due_at: task.due_at || null, source: saved.source });
+      }
+
+      if (!created.length) {
+        await ctx.reply("识别到了内容，但没有可入库的有效任务。请给图片加一段说明文字后重试。");
+        return;
+      }
+
+      const lines = [
+        `图片导入完成：${created.length} 条`,
+        `confidence: ${Number(parsed.confidence || 0).toFixed(2)}`
+      ];
+
+      for (const item of created.slice(0, 10)) {
+        lines.push(`${item.id} | ${item.title} | 截止: ${formatDue(item.due_at)} | ${item.source}`);
+      }
+
+      if (created.length > 10) {
+        lines.push(`...其余 ${created.length - 10} 条已导入`);
+      }
+
+      if (parsed.questions?.length) {
+        lines.push(`备注: ${parsed.questions.join(" | ")}`);
+      }
+
+      await ctx.reply(lines.join("\n"));
+    } catch (error) {
+      await ctx.reply(`图片导入失败：${error.message}`);
     }
   });
 
@@ -119,6 +178,7 @@ export function createBot() {
     await ctx.reply([
       "可用命令：",
       "/quick <自然语言>",
+      "直接发送图片（自动识别并导入任务）",
       "/todo",
       "/list",
       "/today",

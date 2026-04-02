@@ -1,6 +1,7 @@
 ﻿import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { z } from "zod";
 import { appConfig } from "../config.js";
 import { validateAiResult } from "./schemas.js";
 
@@ -36,7 +37,7 @@ async function loadPromptFile(fileName) {
   return readFile(fullPath, "utf8");
 }
 
-async function callChatJson(systemPrompt, userPrompt) {
+async function postChat(payload) {
   const response = await fetch(buildUrl("/chat/completions"), {
     method: "POST",
     headers: {
@@ -47,10 +48,7 @@ async function callChatJson(systemPrompt, userPrompt) {
       model: appConfig.aiModel,
       temperature: 0.1,
       response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt }
-      ]
+      ...payload
     })
   });
 
@@ -64,7 +62,32 @@ async function callChatJson(systemPrompt, userPrompt) {
   if (!content) {
     throw new Error("AI API returned empty completion content.");
   }
+
   return parseJsonFromText(content);
+}
+
+async function callChatJson(systemPrompt, userPrompt) {
+  return postChat({
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt }
+    ]
+  });
+}
+
+async function callVisionJson(systemPrompt, textPrompt, imageUrl) {
+  return postChat({
+    messages: [
+      { role: "system", content: systemPrompt },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: textPrompt },
+          { type: "image_url", image_url: { url: imageUrl } }
+        ]
+      }
+    ]
+  });
 }
 
 export async function parseTaskInput(inputText, timezone, nowIso) {
@@ -90,6 +113,64 @@ export async function reviewParsedResult(parsed) {
 
   const raw = await callChatJson(systemPrompt, userPrompt);
   return validateAiResult(raw);
+}
+
+const imageImportSchema = z.object({
+  tasks: z.array(
+    z.object({
+      title: z.string().min(1),
+      description: z.string().nullable().optional(),
+      start_at: z.string().nullable().optional(),
+      due_at: z.string().nullable().optional(),
+      timezone: z.string().optional(),
+      priority: z.enum(["low", "medium", "high", "urgent"]).optional(),
+      status: z.enum(["todo", "in_progress", "done", "deferred"]).optional(),
+      tags: z.array(z.string()).optional(),
+      repeat_rule: z.enum(["none", "daily", "weekly", "rrule"]).optional()
+    })
+  ),
+  confidence: z.number().min(0).max(1).default(0.8),
+  questions: z.array(z.string()).default([])
+});
+
+export async function parseTasksFromImage(imageUrl, timezone, nowIso, hintText = "") {
+  const systemPrompt = await loadPromptFile("system_image_parser.txt");
+  const userPrompt = [
+    "Extract schedule items from image and return JSON only.",
+    `timezone=${timezone}`,
+    `now=${nowIso}`,
+    `hint=${hintText || "(none)"}`,
+    "JSON schema:",
+    '{"tasks":[{"title":"string","description":"string|null","start_at":"ISO-8601|null","due_at":"ISO-8601|null","timezone":"IANA tz","priority":"low|medium|high|urgent","status":"todo|in_progress|done|deferred","tags":["string"],"repeat_rule":"none|daily|weekly|rrule"}],"confidence":0.0,"questions":["string"]}'
+  ].join("\n");
+
+  const raw = await callVisionJson(systemPrompt, userPrompt, imageUrl);
+  const parsed = imageImportSchema.parse(raw);
+
+  const normalizedTasks = parsed.tasks.map((task) => {
+    const normalized = validateAiResult({
+      intent: "create_task",
+      task: {
+        ...task,
+        timezone: task.timezone || timezone,
+        priority: task.priority || "medium",
+        status: task.status || "todo",
+        tags: task.tags || [],
+        repeat_rule: task.repeat_rule || "none"
+      },
+      confidence: parsed.confidence,
+      needs_confirmation: false,
+      questions: parsed.questions
+    });
+
+    return normalized.task;
+  }).filter(Boolean);
+
+  return {
+    tasks: normalizedTasks,
+    confidence: parsed.confidence,
+    questions: parsed.questions
+  };
 }
 
 export async function summarizeReport(period, metrics, timezone) {
