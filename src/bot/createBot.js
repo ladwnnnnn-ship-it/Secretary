@@ -116,7 +116,12 @@ export function createBot() {
       const reply = await chatReply(inputText, timezone, nowIso);
       await ctx.reply(reply);
     } catch (error) {
-      await ctx.reply(`AI 处理失败：${error.message}`);
+      try {
+        const fallback = await chatReply(inputText, timezone, nowIso);
+        await ctx.reply(fallback);
+      } catch (fallbackError) {
+        await ctx.reply("我这边刚刚有点忙，暂时没理解到你的意思。你可以换种说法，或直接说“提醒我明天几点做什么”。");
+      }
     } finally {
       await endThinking();
     }
