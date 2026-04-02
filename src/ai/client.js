@@ -1,4 +1,4 @@
-﻿import { readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { z } from "zod";
@@ -47,7 +47,6 @@ async function postChat(payload) {
     body: JSON.stringify({
       model: appConfig.aiModel,
       temperature: 0.1,
-      response_format: { type: "json_object" },
       ...payload
     })
   });
@@ -63,20 +62,23 @@ async function postChat(payload) {
     throw new Error("AI API returned empty completion content.");
   }
 
-  return parseJsonFromText(content);
+  return content;
 }
 
 async function callChatJson(systemPrompt, userPrompt) {
-  return postChat({
+  const content = await postChat({
+    response_format: { type: "json_object" },
     messages: [
       { role: "system", content: systemPrompt },
       { role: "user", content: userPrompt }
     ]
   });
+  return parseJsonFromText(content);
 }
 
 async function callVisionJson(systemPrompt, textPrompt, imageUrl) {
-  return postChat({
+  const content = await postChat({
+    response_format: { type: "json_object" },
     messages: [
       { role: "system", content: systemPrompt },
       {
@@ -86,6 +88,16 @@ async function callVisionJson(systemPrompt, textPrompt, imageUrl) {
           { type: "image_url", image_url: { url: imageUrl } }
         ]
       }
+    ]
+  });
+  return parseJsonFromText(content);
+}
+
+async function callChatText(systemPrompt, userPrompt) {
+  return postChat({
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt }
     ]
   });
 }
@@ -183,4 +195,14 @@ export async function summarizeReport(period, metrics, timezone) {
   ].join("\n");
 
   return callChatJson(systemPrompt, userPrompt);
+}
+
+export async function chatReply(inputText, timezone, nowIso) {
+  const systemPrompt = await loadPromptFile("system_chat.txt");
+  const userPrompt = [
+    `timezone=${timezone}`,
+    `now=${nowIso}`,
+    `input=${inputText}`
+  ].join("\n");
+  return callChatText(systemPrompt, userPrompt);
 }
